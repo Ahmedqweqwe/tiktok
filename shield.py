@@ -7,21 +7,19 @@ from telegram import Bot
 from telegram.ext import Updater, CommandHandler, CallbackContext
 from telegram import Update
 
-# 1. إعدادات تليجرام الأساسية (بياناتك مدمجة وجاهزة)
+# 1. إعدادات تليجرام الأساسية
 TELEGRAM_TOKEN = "8287206695:AAG-ddOXd8zPhIHG_ivTx5Iq45zeWoChwD4"
-ADMIN_CHAT_ID = 7896705259  # رقم الـ ID الخاص بك (المسؤول)
+ADMIN_CHAT_ID = 7896705259  # رقم الـ ID الخاص بك
 
 tg_bot = Bot(token=TELEGRAM_TOKEN)
 DATA_FILE = "protected_list.json"
 
-# دالة لتحميل قائمة الحماية من ملف الذاكرة تلقائياً
 def load_users():
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, "r") as f:
             return json.load(f)
     return {"ahmedtop373": ADMIN_CHAT_ID, "roch.roch765": ADMIN_CHAT_ID}
 
-# دالة لحفظ القائمة المحدثة
 def save_users(users):
     with open(DATA_FILE, "w") as f:
         json.dump(users, f)
@@ -65,7 +63,6 @@ async def start_protection_for_user(tiktok_username, telegram_id):
     except Exception as err:
         print(f"❌ تعذر الاتصال بـ لايف @{tiktok_username} حالياً: {err}")
 
-# أمر تليجرام لإضافة صديق جديد من الهاتف فوراً
 def add_user(update: Update, context: CallbackContext):
     chat_id = update.message.chat_id
     if chat_id != ADMIN_CHAT_ID:
@@ -73,7 +70,6 @@ def add_user(update: Update, context: CallbackContext):
         return
 
     try:
-        # الكود يتوقع منك إرسال: /add يوزر_تيكتوك id_تليجرام
         tiktok_user = context.args[0]
         friend_tg_id = context.args[1]
         
@@ -81,15 +77,14 @@ def add_user(update: Update, context: CallbackContext):
         users[tiktok_user] = int(friend_tg_id)
         save_users(users)
         
-        update.message.reply_text(f"✅ تم إضافة الحساب لدرع الحماية السحابي بنجاح:\n👤 تيك توك: @{tiktok_user}\n🆔 تليجرام: {friend_tg_id}\n\n⚙️ جاري تشغيل الحماية تلقائياً...")
+        update.message.reply_text(f"✅ تم إضافة الحساب لدرع الحماية بنجاح:\n👤 تيك توك: @{tiktok_user}\n🆔 تليجرام: {friend_tg_id}")
         
-        # تشغيل حماية الحساب الجديد في الخلفية فوراً دون إعادة تشغيل السيرفر
         loop = asyncio.get_event_loop()
         task = loop.create_task(start_protection_for_user(tiktok_user, int(friend_tg_id)))
         active_tasks[tiktok_user] = task
         
     except (IndexError, ValueError):
-        update.message.reply_text("⚠️ طريقة كتابة الأمر خاطئة!\nاكتب الأمر بهذا الشكل تماماً:\n`/add اسم_حساب_التيكتوك id_التليجرام`")
+        update.message.reply_text("⚠️ اكتب الأمر بهذا الشكل:\n`/add اسم_الحساب id_التليجرام`")
 
 async def run_tiktok_shield():
     loop = asyncio.get_event_loop()
@@ -106,3 +101,5 @@ def start_telegram_bot():
     print("🤖 بوت التحكم عبر تليجرام يعمل الآن...")
 
 if __name__ == "__main__":
+    start_telegram_bot()
+    asyncio.run(run_tiktok_shield())
