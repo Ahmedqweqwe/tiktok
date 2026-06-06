@@ -2,17 +2,18 @@ import asyncio
 import json
 import os
 from TikTokLive import TikTokLiveClient
-from TikTokLive.types.events import CommentEvent
-from telegram import Bot
-from telegram.ext import Updater, CommandHandler, CallbackContext
-from telegram import Update
+from TikTokLive.events import CommentEvent
+from telegram import Bot, Update
+from telegram.ext import Application, CommandHandler, ContextTypes
 
 # 1. إعدادات تليجرام الأساسية
 TELEGRAM_TOKEN = "8287206695:AAG-ddOXd8zPhIHG_ivTx5Iq45zeWoChwD4"
-ADMIN_CHAT_ID = 7896705259  # رقم الـ ID الخاص بك
+ADMIN_CHAT_ID = 7896705259  # تم تنظيف السطر من المسافات المخفية
 
+# إنشاء كائن البوت للإرسال المباشر
 tg_bot = Bot(token=TELEGRAM_TOKEN)
 DATA_FILE = "protected_list.json"
+active_tasks = {}
 
 def load_users():
     if os.path.exists(DATA_FILE):
@@ -25,7 +26,6 @@ def save_users(users):
         json.dump(users, f)
 
 PROTECTED_USERS = load_users()
-active_tasks = {}
 
 MALICIOUS_INDICATORS = [
     "http", "www", "://", ".com", ".net", ".xyz", ".ru", ".cc",
@@ -37,7 +37,7 @@ async def start_protection_for_user(tiktok_username, telegram_id):
     client = TikTokLiveClient(unique_id=tiktok_username)
     print(f"🛡️ جدار الحماية بدأ بمراقبة لايف الحساب: @{tiktok_username}")
 
-    @client.on("comment")
+    @client.on(CommentEvent)
     async def on_comment(event: CommentEvent):
         comment_text = event.comment.lower()
         if any(indicator in comment_text for indicator in MALICIOUS_INDICATORS):
@@ -48,25 +48,35 @@ async def start_protection_for_user(tiktok_username, telegram_id):
                 f"💬 **السكريبت/الرابط المرسل:**\n`{event.comment}`\n\n"
                 f"🛠️ يرجى حظره فوراً من الهاتف!"
             )
-            try: await event.user.mute(duration=99999)
-            except: pass
+            # محاولة كتم المستخدم في التيك توك (تحتاج صلاحيات موديريتور في الحساب الصاحب اللايف)
+            try: 
+                await event.user.mute(duration=99999)
+            except Exception as e: 
+                print(f"⚠️ تعذر كتم المستخدم على تيك توك: {e}")
             
-            try: await tg_bot.send_message(chat_id=ADMIN_CHAT_ID, text=alert_message, parse_mode="Markdown")
-            except: pass
+            # إرسال إشعار للأدمن الخاص بالـ بوت
+            try: 
+                await tg_bot.send_message(chat_id=ADMIN_CHAT_ID, text=alert_message, parse_mode="Markdown")
+            except Exception as e: 
+                print(f"❌ خطأ في إرسال التنبيه للأدمن: {e}")
             
+            # إرسال إشعار لصاحب الحساب إذا لم يكن هو الأدمن نفسه
             if str(telegram_id) != str(ADMIN_CHAT_ID):
-                try: await tg_bot.send_message(chat_id=int(telegram_id), text=alert_message, parse_mode="Markdown")
-                except: pass
+                try: 
+                    await tg_bot.send_message(chat_id=int(telegram_id), text=alert_message, parse_mode="Markdown")
+                except Exception as e: 
+                    print(f"❌ خطأ في إرسال التنبيه للمستخدم: {e}")
 
     try:
         await client.start()
     except Exception as err:
-        print(f"❌ تعذر الاتصال بـ لايف @{tiktok_username} حالياً: {err}")
+        print(f"❌ تعذر الاتصال بـ لايف @{tiktok_username} حالياً أو اللايف مغلق: {err}")
 
-def add_user(update: Update, context: CallbackContext):
-    chat_id = update.message.chat_id
+# تحديث الدالة لتتوافق مع الإصدار الجديد v20+
+async def add_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
     if chat_id != ADMIN_CHAT_ID:
-        update.message.reply_text("❌ عذراً، هذا الأمر متاح للمسؤول فقط!")
+        await update.message.reply_text("❌ عذراً، هذا الأمر متاح للمسؤول فقط!")
         return
 
     try:
@@ -77,29 +87,38 @@ def add_user(update: Update, context: CallbackContext):
         users[tiktok_user] = int(friend_tg_id)
         save_users(users)
         
-        update.message.reply_text(f"✅ تم إضافة الحساب لدرع الحماية بنجاح:\n👤 تيك توك: @{tiktok_user}\n🆔 تليجرام: {friend_tg_id}")
+        await update.message.reply_text(f"✅ تم إضافة الحساب لدرع الحماية بنجاح:\n👤 تيك توك: @{tiktok_user}\n🆔 تليجرام: {friend_tg_id}")
         
-        loop = asyncio.get_event_loop()
-        task = loop.create_task(start_protection_for_user(tiktok_user, int(friend_tg_id)))
+        # تشغيل حماية الحساب الجديد في الخلفية مباشرة دون التأثير على البوت
+        task = asyncio.create_task(start_protection_for_user(tiktok_user, int(friend_tg_id)))
         active_tasks[tiktok_user] = task
         
     except (IndexError, ValueError):
-        update.message.reply_text("⚠️ اكتب الأمر بهذا الشكل:\n`/add اسم_الحساب id_التليجرام`")
+        await update.message.reply_text("⚠️ اكتب الأمر بهذا الشكل:\n`/add اسم_الحساب id_التليجرام`")
 
-async def run_tiktok_shield():
-    loop = asyncio.get_event_loop()
+async def main():
+    # 1. بناء وتجهيز بوت التليجرام بالإصدار الجديد
+    application = Application.builder().token(TELEGRAM_TOKEN).build()
+    application.add_handler(CommandHandler("add", add_user))
+    
+    # 2. تشغيل حماية الحسابات المحفوظة مسبقاً في الخلفية
     for user, tg_id in PROTECTED_USERS.items():
-        task = loop.create_task(start_protection_for_user(user, tg_id))
+        task = asyncio.create_task(start_protection_for_user(user, tg_id))
         active_tasks[user] = task
 
-def start_telegram_bot():
-    updater = Updater(token=TELEGRAM_TOKEN, use_context=True)
-    dp = updater.dispatcher
-    dp.add_handler(CommandHandler("add", add_user))
-    
-    updater.start_polling()
-    print("🤖 بوت التحكم عبر تليجرام يعمل الآن...")
+    # 3. تشغيل البوت والانتظار لاستقبال الأوامر (تجمع بين الـ Loop للبوت والتيك توك معاً)
+    async with application:
+        await application.initialize()
+        await application.start()
+        print("🤖 بوت التحكم عبر تليجرام يعمل الآن...")
+        await application.updater.start_polling()
+        
+        # الحفاظ على تشغيل البرنامج بشكل دائم ومستمر
+        while True:
+            await asyncio.sleep(3600)
 
 if __name__ == "__main__":
-    start_telegram_bot()
-    asyncio.run(run_tiktok_shield())
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        print("\n🛑 تم إيقاف درع الحماية والبوت.")
