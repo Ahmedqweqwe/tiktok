@@ -106,5 +106,3 @@ def start_telegram_bot():
     print("🤖 بوت التحكم عبر تليجرام يعمل الآن...")
 
 if __name__ == "__main__":
-    start_telegram_bot()
-    asyncio.run(run_tiktok_shield())
