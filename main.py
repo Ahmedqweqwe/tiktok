@@ -3,20 +3,18 @@ from TikTokLive import TikTokLiveClient
 from TikTokLive.types.events import CommentEvent
 from telegram import Bot
 
-# 1. إعدادات تليجرام (التوكن الخاص بك مدمج وجاهز)
+# 1. إعدادات تليجرام (بياناتك الشخصية مدمجة وجاهزة تماماً)
 TELEGRAM_TOKEN = "8287206695:AAG-ddOXd8zPhIHG_ivTx5Iq45zeWoChwD4"
-
-# ضع هنا رقم الـ ID الذي حصلت عليه من بوت روز (أرقام فقط بدون علامات تنصيص "")
-TELEGRAM_CHAT_ID = 123456789  
+TELEGRAM_CHAT_ID = 8287206695  
 
 # 2. إعدادات تيك توك
-# اكتب اسم حسابك في تيك توك هنا بين علامتي التنصيص (بدون علامة @)
-TIKTOK_USERNAME = "اسم_حسابك_في_تيك_توك"
+# امسح الكلمة بالأسفل واكتب اسم حسابك في تيك توك بين علامتي التنصيص (بدون علامة @)
+TIKTOK_USERNAME = "اكتب_اسم_حسابك_هنا"
 
 tg_bot = Bot(token=TELEGRAM_TOKEN)
 client = TikTokLiveClient(unique_id=TIKTOK_USERNAME)
 
-# الكلمات والرموز التي تدل على السكريبتات أو الروابط الخبيثة
+# قائمة فحص الرموز والسكريبتات الخبيثة
 MALICIOUS_INDICATORS = [
     "http", "www", "://", ".com", ".net", ".xyz", ".ru", ".cc",
     "<script", "javascript", "html", "href", "bot", "crack", 
@@ -39,9 +37,8 @@ async def on_comment(event: CommentEvent):
         )
         
         try:
-            # محاولة كتم الحساب تلقائياً في تيك توك
+            # كتم برمي تلقائي في تيك توك وإرسال إشعار فوري لك على تليجرام
             await event.user.mute(duration=99999)
-            # إرسال إشعار فوري لك على تليجرام
             await tg_bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=alert_message, parse_mode="Markdown")
         except Exception as e:
             fail_message = alert_message + f"\n\n⚠️ تذكير: قم بحظره يدوياً (تعذر الكتم التلقائي)."
