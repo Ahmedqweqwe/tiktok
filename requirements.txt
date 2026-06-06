@@ -1,4 +1,2 @@
 TikTokLive
-python-telegram-bot==13.15
-pip install --upgrade python-telegram-bot
-pip install --upgrade TikTokLive
+python-telegram-bot
