@@ -4,7 +4,7 @@ import json
 import asyncio
 import types
 
-# حل مشكلة توافق المكتبات في الإصدارات الحديثة
+# حل مشكلة توافق المكتبات في الإصدارات الحديثة لمنصات الاستضافة
 try:
     import imghdr
 except ImportError:
@@ -19,7 +19,7 @@ from TikTokLive import TikTokLiveClient
 from TikTokLive.events import CommentEvent, ConnectEvent
 
 # --- ⚙️ الإعدادات المحدثة والصحيحة بنسبة 100% ---
-TELEGRAM_TOKEN = "8287206695:AAG-ddOXd8zPhIHG_ivTx5Iq45zeWoChwD4"  # التوكن الجديد الخاص بك
+TELEGRAM_TOKEN = "8287206695:AAG-ddOXd8zPhIHG_ivTx5Iq45zeWoChwD4"  # التوكن الصحيح الخاص بك
 ADMIN_CHAT_ID = 7896705259                                         # الآيدي الخاص بك
 
 DATA_FILE = "protected_list.json"
@@ -53,17 +53,23 @@ async def start_tiktok_listener(username, bot_instance):
             
             @client.on("connect")
             async def on_connect(event: ConnectEvent):
-                await bot_instance.send_message(chat_id=ADMIN_CHAT_ID, text=f"🟢 تم بدء حماية ومراقبة بث الحساب: {username}")
+                try:
+                    await bot_instance.send_message(chat_id=ADMIN_CHAT_ID, text=f"🟢 تم بدء حماية ومراقبة بث الحساب: {username}")
+                except Exception as ex:
+                    print(f"Telegram error: {ex}")
 
             @client.on("comment")
             async def on_comment(event: CommentEvent):
                 log_text = f"💬 [{username}] {event.user.unique_id}: {event.comment}"
                 print(log_text)
-                await bot_instance.send_message(chat_id=ADMIN_CHAT_ID, text=log_text)
+                try:
+                    await bot_instance.send_message(chat_id=ADMIN_CHAT_ID, text=log_text)
+                except Exception as ex:
+                    print(f"Telegram report error: {ex}")
 
             await client.start()
         except Exception as e:
-            print(f"Error in {username}: {e}")
+            print(f"Error in live listener for {username}: {e}")
             if username in active_tasks:
                 del active_tasks[username]
 
@@ -74,7 +80,7 @@ async def start_tiktok_listener(username, bot_instance):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_CHAT_ID:
         return
-    await update.message.reply_text("👋 أهلاً بك يا رئيس! أنا بوت حماية بث تيك توك على سيرفر Render.\n\n"
+    await update.message.reply_text("👋 أهلاً بك يا رئيس! أنا بوت حماية بث تيك توك.\n\n"
                                     "➕ لإضافة حساب للحماية: `/add username`\n"
                                     "❌ لإزالة حساب: `/remove username`\n"
                                     "📋 لعرض المحميين: `/list`", parse_mode="Markdown")
@@ -123,10 +129,9 @@ async def list_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg += f"- `{user}` ({status})\n"
     await update.message.reply_text(msg, parse_mode="Markdown")
 
-# --- 🚀 تشغيل البوت الموحد ---
-async def main():
+# --- 🚀 تشغيل البوت الموحد بدون مشاكل Loops ---
+def run_bot():
     load_users()
-    # هنا تم إلغاء البروكسي تماماً لأن Render لا يحتاجه ويسمح بالاتصال المباشر بتليجرام
     application = Application.builder().token(TELEGRAM_TOKEN).build()
 
     application.add_handler(CommandHandler("start", start))
@@ -134,22 +139,10 @@ async def main():
     application.add_handler(CommandHandler("remove", remove_user))
     application.add_handler(CommandHandler("list", list_users))
 
-    await application.initialize()
-    await application.start()
-
-    for user in protected_users:
-        await start_tiktok_listener(user, application.bot)
-
-    print("🚀 البوت مستعد ويعمل الآن بنجاح على Render...")
-    await application.updater.start_polling()
-
-    while True:
-        await asyncio.sleep(3600)
+    print("🚀 البوت مستعد ويعمل الآن بنجاح...")
+    application.run_polling(close_loop=False, allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("🛑 تم إيقاف البوت.")
+    run_bot()
