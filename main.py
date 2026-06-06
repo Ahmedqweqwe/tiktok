@@ -5,11 +5,12 @@ from telegram import Bot
 
 # 1. إعدادات تليجرام (التوكن الخاص بك مدمج وجاهز)
 TELEGRAM_TOKEN = "8287206695:AAG-ddOXd8zPhIHG_ivTx5Iq45zeWoChwD4"
-# ضع هنا رقم الـ ID الذي ستعطيك إياه روز الآن (بدون علامات تنصيص)
-TELEGRAM_CHAT_ID = ضع_رقم_الـ_ID_هنا  
+
+# ضع هنا رقم الـ ID الذي حصلت عليه من بوت روز (أرقام فقط بدون علامات تنصيص "")
+TELEGRAM_CHAT_ID = 123456789  
 
 # 2. إعدادات تيك توك
-# اكتب اسم حسابك في تيك توك هنا بدون علامة @
+# اكتب اسم حسابك في تيك توك هنا بين علامتي التنصيص (بدون علامة @)
 TIKTOK_USERNAME = "اسم_حسابك_في_تيك_توك"
 
 tg_bot = Bot(token=TELEGRAM_TOKEN)
@@ -38,7 +39,9 @@ async def on_comment(event: CommentEvent):
         )
         
         try:
+            # محاولة كتم الحساب تلقائياً في تيك توك
             await event.user.mute(duration=99999)
+            # إرسال إشعار فوري لك على تليجرام
             await tg_bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=alert_message, parse_mode="Markdown")
         except Exception as e:
             fail_message = alert_message + f"\n\n⚠️ تذكير: قم بحظره يدوياً (تعذر الكتم التلقائي)."
