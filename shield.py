@@ -1,124 +1,182 @@
-import asyncio
-import json
+import sys
 import os
-from TikTokLive import TikTokLiveClient
-from TikTokLive.events import CommentEvent
-from telegram import Bot, Update
+import json
+import asyncio
+import aiohttp
+import types
+
+# تلافي مشكلة مكتبة imghdr في الإصدارات الحديثة
+try:
+    import imghdr
+except ImportError:
+    imghdr_mock = types.ModuleType("imghdr")
+    imghdr_mock.what = lambda file, h=None: None
+    sys.modules["imghdr"] = imghdr_mock
+
+from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
+from TikTokLive import TikTokLiveClient
+from TikTokLive.events import CommentEvent, ConnectEvent
 
-# 1. إعدادات تليجرام الأساسية
-TELEGRAM_TOKEN = "8287206695:AAG-ddOXd8zPhIHG_ivTx5Iq45zeWoChwD4"
-ADMIN_CHAT_ID = 7896705259  # تم تنظيف السطر من المسافات المخفية
+# --- ⚙️ الإعدادات الأساسية (تأكد من تعديلها) ---
+TOKEN = "8607011325:AAHbC_Xz7kbylCoYvneUuktU7ngmzt_6KW0"    
+CHAT_ID = 7896705259                  
+PROXY_URL = "http://proxy.server:3128" # البروكسي الخاص بـ PythonAnywhere
 
-# إنشاء كائن البوت للإرسال المباشر
-tg_bot = Bot(token=TELEGRAM_TOKEN)
-DATA_FILE = "protected_list.json"
+PROTECTED_FILE = "protected_list.json"
+protected_users = set()
+
+# تشغيل وإدارة مهام البث النشطة
 active_tasks = {}
 
-def load_users():
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r") as f:
-            return json.load(f)
-    return {"ahmedtop373": ADMIN_CHAT_ID, "roch.roch765": ADMIN_CHAT_ID}
+# --- 📁 إدارة ملف المستخدمين المحميين ---
+def load_protected_list():
+    global protected_users
+    if os.path.exists(PROTECTED_FILE):
+        try:
+            with open(PROTECTED_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    protected_users = {name.strip().lower() for name in data if name}
+                    print(f"📦 تم تحميل {len(protected_users)} مستخدم محمي.")
+        except Exception as e:
+            print(f"خطأ في تحميل الملف: {e}")
 
-def save_users(users):
-    with open(DATA_FILE, "w") as f:
-        json.dump(users, f)
-
-PROTECTED_USERS = load_users()
-
-MALICIOUS_INDICATORS = [
-    "http", "www", "://", ".com", ".net", ".xyz", ".ru", ".cc",
-    "<script", "javascript", "html", "href", "bot", "crack", 
-    "\\", "&&", "$", "{"
-]
-
-async def start_protection_for_user(tiktok_username, telegram_id):
-    client = TikTokLiveClient(unique_id=tiktok_username)
-    print(f"🛡️ جدار الحماية بدأ بمراقبة لايف الحساب: @{tiktok_username}")
-
-    @client.on(CommentEvent)
-    async def on_comment(event: CommentEvent):
-        comment_text = event.comment.lower()
-        if any(indicator in comment_text for indicator in MALICIOUS_INDICATORS):
-            alert_message = (
-                f"🚨 ⚠️ **محاولة هجوم مكتشفة!** ⚠️\n\n"
-                f"📺 **اللايف المستهدف:** `@{tiktok_username}`\n"
-                f"👤 **المهاجم:** `@{event.user.unique_id}`\n"
-                f"💬 **السكريبت/الرابط المرسل:**\n`{event.comment}`\n\n"
-                f"🛠️ يرجى حظره فوراً من الهاتف!"
-            )
-            # محاولة كتم المستخدم في التيك توك (تحتاج صلاحيات موديريتور في الحساب الصاحب اللايف)
-            try: 
-                await event.user.mute(duration=99999)
-            except Exception as e: 
-                print(f"⚠️ تعذر كتم المستخدم على تيك توك: {e}")
-            
-            # إرسال إشعار للأدمن الخاص بالـ بوت
-            try: 
-                await tg_bot.send_message(chat_id=ADMIN_CHAT_ID, text=alert_message, parse_mode="Markdown")
-            except Exception as e: 
-                print(f"❌ خطأ في إرسال التنبيه للأدمن: {e}")
-            
-            # إرسال إشعار لصاحب الحساب إذا لم يكن هو الأدمن نفسه
-            if str(telegram_id) != str(ADMIN_CHAT_ID):
-                try: 
-                    await tg_bot.send_message(chat_id=int(telegram_id), text=alert_message, parse_mode="Markdown")
-                except Exception as e: 
-                    print(f"❌ خطأ في إرسال التنبيه للمستخدم: {e}")
-
+def save_protected_list():
     try:
-        await client.start()
-    except Exception as err:
-        print(f"❌ تعذر الاتصال بـ لايف @{tiktok_username} حالياً أو اللايف مغلق: {err}")
+        with open(PROTECTED_FILE, "w", encoding="utf-8") as f:
+            json.dump(list(protected_users), f, ensure_ascii=False, indent=4)
+    except Exception as e:
+        print(f"خطأ في حفظ الملف: {e}")
 
-# تحديث الدالة لتتوافق مع الإصدار الجديد v20+
+# --- 🛡️ دالة مراقبة بث التيك توك ---
+async def start_tiktok_monitor(username, app_bot):
+    async def run_client():
+        try:
+            client = TikTokLiveClient(unique_id=username)
+            
+            @client.on("connect")
+            async def on_connect(event: ConnectEvent):
+                await app_bot.send_message(chat_id=CHAT_ID, text=f"🟢 تم بدء حماية ومراقبة بث الحساب: {username}")
+
+            @client.on("comment")
+            async def on_comment(event: CommentEvent):
+                # هنا يمكنك إضافة شروط الفلترة أو الحظر للحماية
+                log_text = f"💬 [{username}] {event.user.unique_id}: {event.comment}"
+                print(log_text)
+                await app_bot.send_message(chat_id=CHAT_ID, text=log_text)
+
+            await client.start()
+        except Exception as e:
+            print(f"خطأ في مراقبة {username}: {e}")
+            if username in active_tasks:
+                del active_tasks[username]
+
+    task = asyncio.create_task(run_client())
+    active_tasks[username] = task
+
+# --- 🤖 أوامر التحكم الخاصة بك (تليجرام) ---
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != CHAT_ID:
+        return  # تجاهل أي شخص آخر يحاول التحكم بالبوت
+    await update.message.reply_text("👋 أهلاً بك يا رئيس! أنا بوت حماية بث تيك توك.\n\n"
+                                    "➕ لإضافة حساب للحماية: `/add username`\n"
+                                    "❌ لإزالة حساب: `/remove username`\n"
+                                    "📋 لعرض المحميين: `/list`")
+
 async def add_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    if chat_id != ADMIN_CHAT_ID:
-        await update.message.reply_text("❌ عذراً، هذا الأمر متاح للمسؤول فقط!")
+    if update.effective_user.id != CHAT_ID:
         return
-
-    try:
-        tiktok_user = context.args[0]
-        friend_tg_id = context.args[1]
-        
-        users = load_users()
-        users[tiktok_user] = int(friend_tg_id)
-        save_users(users)
-        
-        await update.message.reply_text(f"✅ تم إضافة الحساب لدرع الحماية بنجاح:\n👤 تيك توك: @{tiktok_user}\n🆔 تليجرام: {friend_tg_id}")
-        
-        # تشغيل حماية الحساب الجديد في الخلفية مباشرة دون التأثير على البوت
-        task = asyncio.create_task(start_protection_for_user(tiktok_user, int(friend_tg_id)))
-        active_tasks[tiktok_user] = task
-        
-    except (IndexError, ValueError):
-        await update.message.reply_text("⚠️ اكتب الأمر بهذا الشكل:\n`/add اسم_الحساب id_التليجرام`")
-
-async def main():
-    # 1. بناء وتجهيز بوت التليجرام بالإصدار الجديد
-    application = Application.builder().token(TELEGRAM_TOKEN).build()
-    application.add_handler(CommandHandler("add", add_user))
     
-    # 2. تشغيل حماية الحسابات المحفوظة مسبقاً في الخلفية
-    for user, tg_id in PROTECTED_USERS.items():
-        task = asyncio.create_task(start_protection_for_user(user, tg_id))
-        active_tasks[user] = task
-
-    # 3. تشغيل البوت والانتظار لاستقبال الأوامر (تجمع بين الـ Loop للبوت والتيك توك معاً)
-    async with application:
-        await application.initialize()
-        await application.start()
-        print("🤖 بوت التحكم عبر تليجرام يعمل الآن...")
-        await application.updater.start_polling()
+    if not context.args:
+        await update.message.reply_text("⚠️ يرجى كتابة يوزر الحساب، مثال:\n`/add roch.roch765`")
+        return
         
-        # الحفاظ على تشغيل البرنامج بشكل دائم ومستمر
-        while True:
-            await asyncio.sleep(3600)
+    username = context.args[0].strip().lower().replace("@", "")
+    if username in protected_users:
+        await update.message.reply_text(f"ℹ️ الحساب {username} مضاف بالفعل في قائمة الحماية.")
+        return
+        
+    protected_users.add(username)
+    save_protected_list()
+    
+    # تشغيل الحماية فورا للحساب المضاف
+    await start_tiktok_monitor(username, context.application.bot)
+    await update.message.reply_text(f"✅ تم إضافة الحساب `{username}` لقائمة الحماية وبدء مراقبته.")
+
+async def remove_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != CHAT_ID:
+        return
+        
+    if not context.args:
+        await update.message.reply_text("⚠️ يرجى كتابة يوزر الحساب لإزالته، مثال:\n`/remove username`")
+        return
+        
+    username = context.args[0].strip().lower().replace("@", "")
+    if username in protected_users:
+        protected_users.remove(username)
+        save_protected_list()
+        
+        # إيقاف مهمة المراقبة إذا كانت تعمل
+        if username in active_tasks:
+            active_tasks[username].cancel()
+            del active_tasks[username]
+            
+        await update.message.reply_text(f"❌ تم إزالة الحساب `{username}` من قائمة الحماية وإيقاف المراقبة.")
+    else:
+        await update.message.reply_text("⚠️ هذا الحساب غير موجود بالقائمة.")
+
+async def list_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != CHAT_ID:
+        return
+    if not protected_users:
+        await update.message.reply_text("📋 قائمة الحماية فارغة حالياً.")
+        return
+    
+    msg = "📋 **قائمة الحسابات المحمية حالياً:**\n\n"
+    for user in protected_users:
+        status = "🟢 نشط" if user in active_tasks else "💤 في الانتظار"
+        msg += f"- `{user}` ({status})\n"
+    await update.message.reply_text(msg)
+
+# --- 🚀 تشغيل البوت الموحد ---
+async def main():
+    load_protected_list()
+    
+    # بناء تطبيق تليجرام مع البروكسي المتوافق مع سرفرات PythonAnywhere المجانية
+    builder = Application.builder().token(TOKEN)
+    if PROXY_URL:
+        builder.proxy(PROXY_URL)
+        builder.get_updates_proxy(PROXY_URL)
+    
+    application = builder.build()
+    
+    # تسجيل الأوامر والتحكم
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("add", add_user))
+    application.add_handler(CommandHandler("remove", remove_user))
+    application.add_handler(CommandHandler("list", list_users))
+    
+    await application.initialize()
+    await application.start()
+    
+    # بدء تشغيل المراقبة تلقائياً لجميع الحسابات المخزنة مسبقاً عند إقلاع البوت
+    for user in protected_users:
+        await start_tiktok_monitor(user, application.bot)
+        
+    print("🚀 البوت يعمل الآن بنجاح وينتظر أوامرك على تليجرام...")
+    
+    # إبقاء البوت مستمراً في العمل (Polling)
+    await application.updater.start_polling()
+    
+    # حلقة حماية لمنع إغلاق الدالة الأساسية
+    while True:
+        await asyncio.sleep(3600)
 
 if __name__ == "__main__":
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     try:
         asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        print("\n🛑 تم إيقاف درع الحماية والبوت.")
+    except KeyboardInterrupt:
+        print("🛑 تم إيقاف البوت.")
